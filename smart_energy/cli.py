@@ -30,7 +30,7 @@ def print_status(config_path: str = "config/energy_default.yaml") -> None:
     print(f"Voltage Sag Limit   : {settings.grid.voltage_sag_threshold}V")
     print(f"Voltage Swell Limit : {settings.grid.voltage_swell_threshold}V")
     print(f"Spike Threshold     : {settings.grid.spike_power_threshold_kw} kW")
-    print(f"Cost rate ($/kWh)   : ${settings.grid.cost_per_kwh}")
+    print(f"Base Rate ($/kWh)   : ${settings.grid.cost_per_kwh}")
     print(f"Database Path       : {settings.storage.sqlite_path}")
     print(f"Web Dashboard Port  : http://localhost:{settings.dashboard.port}")
     print("==================================================\n")
@@ -56,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--config", default="config/energy_default.yaml")
     report.add_argument("--limit", type=int, default=20)
 
+    export_csv = subparsers.add_parser("export-csv", help="Export telemetry logs to CSV file")
+    export_csv.add_argument("--config", default="config/energy_default.yaml")
+    export_csv.add_argument("--output", default="logs/energy_report.csv")
+    export_csv.add_argument("--limit", type=int, default=1000)
+
     args = parser.parse_args(argv)
 
     if args.command == "status":
@@ -69,7 +74,16 @@ def main(argv: list[str] | None = None) -> int:
         rows = db.fetch_recent(limit=args.limit)
         print(f"\n--- RECENT ENERGY TELEMETRY LOGS ({len(rows)} entries) ---")
         for r in rows:
-            print(f"[{r['datetime_str']}] {r['voltage']}V | {r['current']}A | {r['active_power']}W | PF: {r['power_factor']} | {r['cumulative_kwh']} kWh (${r['estimated_cost']})")
+            print(f"[{r['datetime_str']}] {r['voltage']}V | {r['current']}A | {r['active_power']}W | Tariff: {r.get('tariff_tier', 'OFF_PEAK')} | {r['cumulative_kwh']} kWh (${r['estimated_cost']})")
+        db.close()
+        return 0
+
+    if args.command == "export-csv":
+        settings = load_energy_settings(args.config)
+        db = AsyncEnergyDB(settings.storage)
+        time.sleep(0.5)
+        target = db.export_csv(output_file=args.output, limit=args.limit)
+        print(f"Successfully exported energy telemetry report to: {target}")
         db.close()
         return 0
 

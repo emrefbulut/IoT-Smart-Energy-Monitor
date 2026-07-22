@@ -9,13 +9,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .analytics import EnergyTelemetry
+from .analytics import EnergyTelemetry, export_telemetry_to_csv
 from .config import StorageConfig
 
 logger = logging.getLogger("smart_energy.database")
 
 
 class AsyncEnergyDB:
+    """Asynchronous SQLite storage engine for energy telemetry and anomaly events with WAL mode."""
+
     def __init__(self, config: StorageConfig):
         self.config = config
         self.db_path = Path(config.sqlite_path)
@@ -47,6 +49,7 @@ class AsyncEnergyDB:
                     frequency REAL NOT NULL,
                     cumulative_kwh REAL NOT NULL,
                     estimated_cost REAL NOT NULL,
+                    tariff_tier TEXT NOT NULL DEFAULT 'OFF_PEAK',
                     anomalies_json TEXT,
                     is_simulated INTEGER NOT NULL
                 )
@@ -77,8 +80,8 @@ class AsyncEnergyDB:
                     INSERT INTO energy_telemetry (
                         timestamp, datetime_str, voltage, current, active_power,
                         apparent_power, reactive_power, power_factor, frequency,
-                        cumulative_kwh, estimated_cost, anomalies_json, is_simulated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        cumulative_kwh, estimated_cost, tariff_tier, anomalies_json, is_simulated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         t.timestamp,
@@ -92,6 +95,7 @@ class AsyncEnergyDB:
                         t.frequency,
                         t.cumulative_kwh,
                         t.estimated_cost,
+                        t.tariff_tier,
                         anomalies_json,
                         1 if t.is_simulated else 0,
                     ),
@@ -108,7 +112,8 @@ class AsyncEnergyDB:
             cursor.execute(
                 """
                 SELECT timestamp, datetime_str, voltage, current, active_power,
-                       power_factor, cumulative_kwh, estimated_cost, anomalies_json
+                       apparent_power, reactive_power, power_factor, frequency,
+                       cumulative_kwh, estimated_cost, tariff_tier, anomalies_json, is_simulated
                 FROM energy_telemetry
                 ORDER BY id DESC LIMIT ?
                 """,
@@ -116,6 +121,10 @@ class AsyncEnergyDB:
             )
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
+
+    def export_csv(self, output_file: str | Path, limit: int = 1000) -> Path:
+        rows = self.fetch_recent(limit=limit)
+        return export_telemetry_to_csv(rows, output_file)
 
     def close(self) -> None:
         self._stopped.set()

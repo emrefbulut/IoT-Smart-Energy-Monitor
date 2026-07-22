@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
+import datetime
 import math
+from pathlib import Path
 import time
-from typing import Sequence
+from typing import Sequence, Any
 
 from .config import GridConfig
 from .hardware_bridge import RawSensorSample
@@ -12,26 +15,41 @@ from .hardware_bridge import RawSensorSample
 @dataclass(frozen=True)
 class EnergyTelemetry:
     timestamp: float
-    voltage: float
-    current: float
-    active_power: float
-    apparent_power: float
-    reactive_power: float
-    power_factor: float
-    frequency: float
-    cumulative_kwh: float
-    estimated_cost: float
+    voltage: float           # Volts AC RMS
+    current: float           # Amperes RMS
+    active_power: float      # Watts (P)
+    apparent_power: float    # VA (S)
+    reactive_power: float    # VAR (Q)
+    power_factor: float      # PF 0.0 - 1.0
+    frequency: float         # Hz
+    cumulative_kwh: float    # kWh accumulated
+    estimated_cost: float    # Accumulated cost ($)
+    tariff_tier: str         # "PEAK", "OFF_PEAK", "NIGHT"
     anomalies: tuple[str, ...]
     is_simulated: bool
 
 
 class EnergyAnalyticsEngine:
+    """Advanced electrical signal processing, multi-tariff energy accounting, and anomaly detection."""
+
     def __init__(self, config: GridConfig):
         self.config = config
         self.cumulative_energy_joules: float = 0.0
         self._last_sample_time: float | None = None
         self.total_anomalies_detected: int = 0
-        self.recent_anomalies: list[dict] = []
+        self.recent_anomalies: list[dict[str, Any]] = []
+
+    def _determine_tariff(self, dt_obj: datetime.datetime) -> tuple[str, float]:
+        """Determines time-of-use (TOU) tariff tier and rate ($/kWh)."""
+        hour = dt_obj.hour
+        # Peak hours: 17:00 - 22:00 (Multiplier 1.5x)
+        if 17 <= hour < 22:
+            return "PEAK", self.config.cost_per_kwh * 1.5
+        # Night hours: 22:00 - 06:00 (Multiplier 0.7x)
+        if hour >= 22 or hour < 6:
+            return "NIGHT", self.config.cost_per_kwh * 0.7
+        # Standard Off-Peak hours: 06:00 - 17:00 (Multiplier 1.0x)
+        return "OFF_PEAK", self.config.cost_per_kwh
 
     def process_sample(self, raw: RawSensorSample) -> EnergyTelemetry:
         now = raw.timestamp
@@ -44,11 +62,14 @@ class EnergyAnalyticsEngine:
         s_apparent = raw.voltage * raw.current
         q_reactive = math.sqrt(max(0.0, (s_apparent ** 2) - (p_active ** 2)))
 
+        dt_obj = datetime.datetime.fromtimestamp(now)
+        tariff_tier, effective_rate = self._determine_tariff(dt_obj)
+
         if dt > 0 and dt < 30.0:
             self.cumulative_energy_joules += p_active * dt
 
         cumulative_kwh = self.cumulative_energy_joules / 3_600_000.0
-        estimated_cost = cumulative_kwh * self.config.cost_per_kwh
+        estimated_cost = cumulative_kwh * effective_rate
 
         anomalies: list[str] = []
         if raw.voltage < self.config.voltage_sag_threshold:
@@ -86,6 +107,28 @@ class EnergyAnalyticsEngine:
             frequency=round(raw.frequency, 1),
             cumulative_kwh=round(cumulative_kwh, 4),
             estimated_cost=round(estimated_cost, 4),
+            tariff_tier=tariff_tier,
             anomalies=tuple(anomalies),
             is_simulated=raw.is_simulated,
         )
+
+
+def export_telemetry_to_csv(rows: Sequence[dict[str, Any]], output_file: str | Path) -> Path:
+    out_path = Path(output_file)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "timestamp", "datetime_str", "voltage", "current",
+        "active_power", "apparent_power", "reactive_power",
+        "power_factor", "frequency", "cumulative_kwh", "estimated_cost",
+        "tariff_tier", "anomalies_json", "is_simulated"
+    ]
+
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows:
+            row_data = {k: r.get(k, "") for k in fieldnames}
+            writer.writerow(row_data)
+
+    return out_path

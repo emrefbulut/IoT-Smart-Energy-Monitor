@@ -45,6 +45,7 @@ def test_electrical_analytics_and_anomalies():
     )
     t1 = engine.process_sample(s1)
     assert t1.active_power == 460.0
+    assert t1.tariff_tier in ("PEAK", "OFF_PEAK", "NIGHT")
     assert len(t1.anomalies) == 0
 
     s_sag = RawSensorSample(
@@ -73,8 +74,9 @@ def test_electrical_analytics_and_anomalies():
     t_pf = engine.process_sample(s_low_pf)
     assert any("LOW_POWER_FACTOR" in a for a in t_pf.anomalies)
 
-def test_async_energy_database(tmp_path: Path):
+def test_async_energy_database_and_csv_export(tmp_path: Path):
     db_path = tmp_path / "energy_test.sqlite3"
+    csv_path = tmp_path / "energy_report.csv"
     from smart_energy.config import StorageConfig
     db = AsyncEnergyDB(StorageConfig(sqlite_path=str(db_path)))
 
@@ -97,3 +99,9 @@ def test_async_energy_database(tmp_path: Path):
     assert len(rows) == 1
     assert rows[0]["voltage"] == 231.0
     assert rows[0]["active_power"] == 693.0
+
+    target = db.export_csv(csv_path)
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert "active_power" in content
+    assert "231.0" in content
