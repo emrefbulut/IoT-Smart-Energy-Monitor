@@ -1,0 +1,25 @@
+hardware:
+  port: null
+  baudrate: 115200
+  timeout: 1.0
+  use_simulation_fallback: true
+  sampling_interval_seconds: 0.5
+
+grid:
+  nominal_voltage: 230.0
+  nominal_frequency: 50.0
+  voltage_sag_threshold: 207.0
+  voltage_swell_threshold: 253.0
+  low_pf_threshold: 0.85
+  spike_power_threshold_kw: 2.5
+  cost_per_kwh: 0.15
+
+storage:
+  sqlite_path: "logs/energy_events.sqlite3"
+  wal_mode: true
+  history_retention_days: 30
+
+dashboard:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8050

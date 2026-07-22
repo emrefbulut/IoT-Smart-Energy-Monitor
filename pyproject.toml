@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iot-smart-energy-monitor"
+version = "1.0.0"
+description = "IoT Smart Energy Monitoring System - Real-time Electrical Power Analytics, ESP32 Firmware & Web Dashboard."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pyserial>=3.5",
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+smart-energy = "smart_energy.cli:main"
+energy-monitor = "smart_energy.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["smart_energy*"]
