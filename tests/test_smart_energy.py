@@ -134,7 +134,9 @@ def test_tou_cost_prices_each_interval_at_its_own_tariff():
     OFF_PEAK'te biriken enerji, saat 17:00'de PEAK'e gecince 1.5x ile yeniden
     fiyatlaniyor ve maliyet gercekte olandan yuksek cikiyordu.
     """
-    base_rate = 0.15
+    # Telemetri maliyeti 4 basamaga yuvarladigi icin, tarife degerini yuvarlama
+    # adiminin (1e-4) belirgin sekilde ustunde kalacak buyuklukte seciyoruz.
+    base_rate = 5.0
     engine = EnergyAnalyticsEngine(GridConfig(cost_per_kwh=base_rate, spike_power_threshold_kw=99.0))
 
     # 3600 W sabit yuk: 10 saniyede tam olarak 0.01 kWh.
@@ -161,19 +163,21 @@ def test_tou_cost_prices_each_interval_at_its_own_tariff():
 
 def test_tou_cost_never_decreases_across_tariff_boundaries():
     """Tarife ucuzlasa bile birikmis maliyet asla dusmez."""
-    engine = EnergyAnalyticsEngine(GridConfig(cost_per_kwh=0.15, spike_power_threshold_kw=99.0))
+    engine = EnergyAnalyticsEngine(GridConfig(cost_per_kwh=5.0, spike_power_threshold_kw=99.0))
 
-    # 21:59:40 -> 22:00:10 araligi PEAK'ten NIGHT'a (0.7x) geciyor.
+    # 21:59:40 -> 22:00:10 araligi PEAK'ten (1.5x) NIGHT'a (0.7x) geciyor.
     start = datetime.datetime(2026, 3, 10, 21, 59, 40)
     costs = []
+    tiers = []
     for step in range(0, 40, 10):
         telemetry = engine.process_sample(_sample_at(start + datetime.timedelta(seconds=step), 3600.0))
         costs.append(telemetry.estimated_cost)
+        tiers.append(telemetry.tariff_tier)
 
-    assert "NIGHT" in [
-        engine._determine_tariff(datetime.datetime(2026, 3, 10, 22, 0, 10))[0]
-    ]
+    assert tiers == ["PEAK", "PEAK", "NIGHT", "NIGHT"]
     assert costs == sorted(costs), f"maliyet geriye dogru dustu: {costs}"
+    # Ucuz tarifeye gecmek maliyeti dondurmamali; artis surmelidir.
+    assert costs[-1] > costs[1]
 
 
 def test_relay_command_reports_failure_without_hardware():
