@@ -37,7 +37,9 @@ class StorageConfig:
 @dataclass(frozen=True)
 class DashboardConfig:
     enabled: bool = True
-    host: str = "0.0.0.0"
+    # Varsayilan olarak yalnizca yerel makineye baglanir. Panoda kimlik dogrulama
+    # yok; agdaki herkese acmak icin config'de acikca "0.0.0.0" yazilmalidir.
+    host: str = "127.0.0.1"
     port: int = 8050
 
 
@@ -85,7 +87,7 @@ def load_energy_settings(path: str | Path = "config/energy_default.yaml") -> Ene
         ),
         dashboard=DashboardConfig(
             enabled=bool(dash.get("enabled", True)),
-            host=str(dash.get("host", "0.0.0.0")),
+            host=str(dash.get("host", "127.0.0.1")),
             port=int(dash.get("port", 8050)),
         ),
     )

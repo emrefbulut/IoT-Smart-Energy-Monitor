@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Hardware Support](https://img.shields.io/badge/hardware-ESP32%20%7C%20Arduino-teal.svg)](hardware/esp32_energy_monitor/esp32_energy_monitor.ino)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![CI](https://github.com/emrefbulut/IoT-Smart-Energy-Monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/emrefbulut/IoT-Smart-Energy-Monitor/actions/workflows/ci.yml)
 
 An enterprise-grade physical and software IoT energy monitoring engineering system designed for real-time AC electrical energy data acquisition, power vector processing, anomaly detection, asynchronous database logging, and live web visualization.
 
@@ -75,11 +75,15 @@ smart-energy report --limit 20
 
 ## 🧪 Testing
 
-Execute automated unit test suite:
+Install the dev extras, then execute the automated unit test suite:
 
 ```powershell
+python -m pip install -e ".[dev]"
 pytest tests/ -v
 ```
+
+The same suite runs in GitHub Actions on Python 3.10 and 3.12 for every push and
+pull request against `main`.
 
 ---
 
