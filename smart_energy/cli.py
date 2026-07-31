@@ -11,6 +11,8 @@ from .config import load_energy_settings
 from .database import AsyncEnergyDB
 from .dashboard import EnergyDashboardServer
 from .hardware_bridge import IoTDataReceiver
+from .load_shedding import LoadSheddingController
+from .mqtt import MqttBridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("smart_energy.cli")
@@ -95,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         receiver = IoTDataReceiver(settings.hardware)
         analytics = EnergyAnalyticsEngine(settings.grid)
         db = AsyncEnergyDB(settings.storage)
+        shedding = LoadSheddingController(settings.load_shedding)
+
+        mqtt_bridge = MqttBridge(settings.mqtt)
+        mqtt_bridge.start()
 
         dashboard = None
         if not args.no_web:
@@ -110,7 +116,31 @@ def main(argv: list[str] | None = None) -> int:
             if telemetry.anomalies:
                 logger.warning(f"GRID ANOMALY DETECTED: {', '.join(telemetry.anomalies)}")
 
+            mqtt_bridge.publish_telemetry(telemetry)
+            mqtt_bridge.publish_alert(telemetry)
+
+            # Olcum -> karar -> role zinciri burada tamamlaniyor. Karar motoru
+            # histerezis ve dogrulama uyguladigi icin komut yalnizca gercekten
+            # gerektiginde uretilir.
+            decision = shedding.evaluate(telemetry.active_power)
+            if decision.command is not None:
+                if receiver.send_relay_command(decision.command):
+                    logger.warning(
+                        f"LOAD {decision.action}: {decision.power_kw:.2f} kW -> '{decision.command}'"
+                    )
+                else:
+                    logger.error(
+                        f"LOAD {decision.action} komutu gonderilemedi (donanim baglantisi yok)"
+                    )
+                mqtt_bridge.publish_load_event(decision)
+
         receiver.subscribe(on_sample)
+
+        # ESP32 WiFi uzerinden yayin yapiyorsa olcumler seri port yerine
+        # MQTT'den de gelebilir; iki kaynak da ayni isleyiciyi besler.
+        if settings.mqtt.ingest_device_samples:
+            mqtt_bridge.subscribe_device_samples(on_sample)
+
         receiver.start()
 
         print("\n==================================================")
@@ -126,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             print("\nShutting down energy monitoring engine...")
         finally:
             receiver.stop()
+            mqtt_bridge.stop()
             db.close()
             if dashboard is not None:
                 dashboard.stop()

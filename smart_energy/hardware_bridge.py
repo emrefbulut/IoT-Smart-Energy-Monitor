@@ -25,6 +25,24 @@ class RawSensorSample:
     is_simulated: bool
 
 
+def parse_sensor_payload(data: dict, is_simulated: bool = False) -> RawSensorSample:
+    """Cihazdan gelen JSON govdesini olcume cevirir.
+
+    Seri port ve MQTT (WiFi) yollarinin ikisi de bunu kullanir, boylece iki
+    tasima katmani birebir ayni alanlari ve varsayilanlari uygular.
+    """
+    return RawSensorSample(
+        timestamp=time.time(),
+        voltage=float(data.get("voltage", 230.0)),
+        current=float(data.get("current", 0.0)),
+        power=float(data.get("power", 0.0)),
+        power_factor=float(data.get("power_factor", 1.0)),
+        frequency=float(data.get("frequency", 50.0)),
+        relay_state=bool(data.get("relay_state", True)),
+        is_simulated=is_simulated,
+    )
+
+
 class IoTDataReceiver:
     RECONNECT_MAX_DELAY_SECONDS = 30.0
 
@@ -143,17 +161,7 @@ class IoTDataReceiver:
                 try:
                     line = self._serial.readline().decode("utf-8", errors="ignore").strip()
                     if line.startswith("{") and line.endswith("}"):
-                        data = json.loads(line)
-                        sample = RawSensorSample(
-                            timestamp=time.time(),
-                            voltage=float(data.get("voltage", 230.0)),
-                            current=float(data.get("current", 0.0)),
-                            power=float(data.get("power", 0.0)),
-                            power_factor=float(data.get("power_factor", 1.0)),
-                            frequency=float(data.get("frequency", 50.0)),
-                            relay_state=bool(data.get("relay_state", True)),
-                            is_simulated=False,
-                        )
+                        sample = parse_sensor_payload(json.loads(line), is_simulated=False)
                         self._reconnect_delay = 0.0
                 except json.JSONDecodeError as exc:
                     logger.error(f"Error parsing serial JSON: {exc}")
