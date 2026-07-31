@@ -18,26 +18,35 @@ class FakeClock:
 
 
 def build(**overrides):
-    config = LoadSheddingConfig(
-        enabled=True,
-        shed_threshold_kw=3.0,
-        restore_threshold_kw=2.0,
-        confirm_samples=3,
-        min_action_interval_seconds=30.0,
-        **overrides,
-    )
+    settings = {
+        "enabled": True,
+        "shed_threshold_kw": 3.0,
+        "restore_threshold_kw": 2.0,
+        "confirm_samples": 3,
+        "min_action_interval_seconds": 30.0,
+    }
+    settings.update(overrides)
+
     clock = FakeClock()
-    return LoadSheddingController(config, clock=clock), clock
+    return LoadSheddingController(LoadSheddingConfig(**settings), clock=clock), clock
+
+
+def feed(controller, power_w: float, times: int):
+    """Ayni yuku birkac kez uygular ve uretilen kararlari dondurur.
+
+    Aksiyon dogrulama penceresi dolar dolmaz uretildigi icin sonuncu karara
+    bakmak yaniltici olur; testler uretilen kararlarin tamamina bakar.
+    """
+    return [controller.evaluate(power_w) for _ in range(times)]
 
 
 def test_disabled_controller_never_acts():
     controller, _ = build(enabled=False)
 
-    for _ in range(10):
-        decision = controller.evaluate(9999.0)
+    decisions = feed(controller, 9999.0, times=10)
 
-    assert decision.action == "HOLD"
-    assert decision.command is None
+    assert all(item.action == "HOLD" for item in decisions)
+    assert all(item.command is None for item in decisions)
     assert controller.shed_active is False
 
 
@@ -45,12 +54,10 @@ def test_requires_consecutive_samples_before_shedding():
     """Anlik bir sicrama yuku kesmemeli."""
     controller, _ = build()
 
-    assert controller.evaluate(4000.0).command is None  # 1
-    assert controller.evaluate(4000.0).command is None  # 2
-    decision = controller.evaluate(4000.0)  # 3 -> aksiyon
+    decisions = feed(controller, 4000.0, times=3)
 
-    assert decision.action == "SHED"
-    assert decision.command == "SHED_LOAD"
+    assert [item.action for item in decisions] == ["HOLD", "HOLD", "SHED"]
+    assert decisions[-1].command == "SHED_LOAD"
     assert controller.shed_active is True
 
 
@@ -71,33 +78,30 @@ def test_hysteresis_band_holds_state():
     """Iki esik arasindaki bolgede hicbir aksiyon alinmaz."""
     controller, clock = build()
 
-    for _ in range(3):
-        controller.evaluate(4000.0)
+    feed(controller, 4000.0, times=3)
     assert controller.shed_active is True
 
     clock.advance(60.0)
     # 2.5 kW: kesme esiginin altinda ama geri verme esiginin ustunde.
-    for _ in range(5):
-        decision = controller.evaluate(2500.0)
+    decisions = feed(controller, 2500.0, times=5)
 
-    assert decision.reason == "within_hysteresis_band"
+    assert all(item.reason == "within_hysteresis_band" for item in decisions)
+    assert all(item.command is None for item in decisions)
     assert controller.shed_active is True
 
 
 def test_restores_when_load_drops_below_restore_threshold():
     controller, clock = build()
 
-    for _ in range(3):
-        controller.evaluate(4000.0)
+    feed(controller, 4000.0, times=3)
     assert controller.shed_active is True
 
     clock.advance(60.0)
-    controller.evaluate(1000.0)
-    controller.evaluate(1000.0)
-    decision = controller.evaluate(1000.0)
+    decisions = feed(controller, 1000.0, times=3)
 
-    assert decision.action == "RESTORE"
-    assert decision.command == "CONNECT_LOAD"
+    # Dogrulama penceresi dolana kadar beklenir, sonra tek bir aksiyon uretilir.
+    assert [item.action for item in decisions] == ["HOLD", "HOLD", "RESTORE"]
+    assert decisions[-1].command == "CONNECT_LOAD"
     assert controller.shed_active is False
 
 
@@ -111,17 +115,19 @@ def test_minimum_interval_blocks_rapid_toggling():
 
     # Sure dolmadan yuk dustu: geri verme ertelenmeli.
     clock.advance(5.0)
-    for _ in range(5):
-        decision = controller.evaluate(500.0)
+    blocked = feed(controller, 500.0, times=5)
 
-    assert decision.reason == "min_interval_not_elapsed"
+    assert all(item.action == "HOLD" for item in blocked)
+    assert any(item.reason == "min_interval_not_elapsed" for item in blocked)
     assert controller.shed_active is True
 
+    # Sure dolunca ilk olcumde geri verilir.
     clock.advance(30.0)
-    for _ in range(3):
-        decision = controller.evaluate(500.0)
+    allowed = feed(controller, 500.0, times=3)
 
-    assert decision.action == "RESTORE"
+    assert [item.action for item in allowed].count("RESTORE") == 1
+    assert allowed[0].action == "RESTORE"
+    assert controller.shed_active is False
 
 
 def test_rejects_configuration_without_hysteresis():
