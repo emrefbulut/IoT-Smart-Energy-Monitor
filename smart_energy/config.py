@@ -37,8 +37,48 @@ class StorageConfig:
 @dataclass(frozen=True)
 class DashboardConfig:
     enabled: bool = True
-    host: str = "0.0.0.0"
+    # Varsayilan olarak yalnizca yerel makineye baglanir. Panoda kimlik dogrulama
+    # yok; agdaki herkese acmak icin config'de acikca "0.0.0.0" yazilmalidir.
+    host: str = "127.0.0.1"
     port: int = 8050
+
+
+@dataclass(frozen=True)
+class MqttConfig:
+    """MQTT yayini ve cihaz dinleme ayarlari.
+
+    Kapaliyken uygulama tamamen yerel calisir; MQTT bir ek yetenektir, zorunluluk
+    degildir.
+    """
+
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 1883
+    username: str | None = None
+    password: str | None = None
+    client_id: str = "smart-energy"
+    base_topic: str = "smart-energy"
+    qos: int = 0
+    tls: bool = False
+    # ESP32 WiFi uzerinden yayin yapiyorsa ham olcumler MQTT'den alinir.
+    ingest_device_samples: bool = False
+
+
+@dataclass(frozen=True)
+class LoadSheddingConfig:
+    """Esik asildiginda yuku otomatik kesme ayarlari.
+
+    restore_threshold_kw, shed_threshold_kw'dan kucuk olmalidir; aradaki fark
+    histerezis bandidir ve rolenin surekli acilip kapanmasini engeller.
+    """
+
+    enabled: bool = False
+    shed_threshold_kw: float = 3.0
+    restore_threshold_kw: float = 2.0
+    confirm_samples: int = 3
+    min_action_interval_seconds: float = 30.0
+    shed_command: str = "SHED_LOAD"
+    restore_command: str = "CONNECT_LOAD"
 
 
 @dataclass(frozen=True)
@@ -47,6 +87,8 @@ class EnergyAppSettings:
     grid: GridConfig = field(default_factory=GridConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    mqtt: MqttConfig = field(default_factory=MqttConfig)
+    load_shedding: LoadSheddingConfig = field(default_factory=LoadSheddingConfig)
 
 
 def load_energy_settings(path: str | Path = "config/energy_default.yaml") -> EnergyAppSettings:
@@ -60,6 +102,8 @@ def load_energy_settings(path: str | Path = "config/energy_default.yaml") -> Ene
     grid = raw.get("grid", {})
     storage = raw.get("storage", {})
     dash = raw.get("dashboard", {})
+    mqtt = raw.get("mqtt", {})
+    shedding = raw.get("load_shedding", {})
 
     return EnergyAppSettings(
         hardware=HardwareConfig(
@@ -85,7 +129,28 @@ def load_energy_settings(path: str | Path = "config/energy_default.yaml") -> Ene
         ),
         dashboard=DashboardConfig(
             enabled=bool(dash.get("enabled", True)),
-            host=str(dash.get("host", "0.0.0.0")),
+            host=str(dash.get("host", "127.0.0.1")),
             port=int(dash.get("port", 8050)),
+        ),
+        mqtt=MqttConfig(
+            enabled=bool(mqtt.get("enabled", False)),
+            host=str(mqtt.get("host", "localhost")),
+            port=int(mqtt.get("port", 1883)),
+            username=(str(mqtt["username"]) if mqtt.get("username") else None),
+            password=(str(mqtt["password"]) if mqtt.get("password") else None),
+            client_id=str(mqtt.get("client_id", "smart-energy")),
+            base_topic=str(mqtt.get("base_topic", "smart-energy")),
+            qos=int(mqtt.get("qos", 0)),
+            tls=bool(mqtt.get("tls", False)),
+            ingest_device_samples=bool(mqtt.get("ingest_device_samples", False)),
+        ),
+        load_shedding=LoadSheddingConfig(
+            enabled=bool(shedding.get("enabled", False)),
+            shed_threshold_kw=float(shedding.get("shed_threshold_kw", 3.0)),
+            restore_threshold_kw=float(shedding.get("restore_threshold_kw", 2.0)),
+            confirm_samples=int(shedding.get("confirm_samples", 3)),
+            min_action_interval_seconds=float(shedding.get("min_action_interval_seconds", 30.0)),
+            shed_command=str(shedding.get("shed_command", "SHED_LOAD")),
+            restore_command=str(shedding.get("restore_command", "CONNECT_LOAD")),
         ),
     )

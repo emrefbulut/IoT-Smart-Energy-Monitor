@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
-import socketserver
 import threading
 import time
 from typing import Any
@@ -231,21 +230,21 @@ class EnergyDashboardServer:
     def __init__(self, config: DashboardConfig):
         self.config = config
         self.state = DashboardState()
-        self.server: HTTPServer | None = None
+        self.server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         class CustomHandler(EnergyDashboardHandler):
             state = self.state
 
-        self.server = socketserver.TCPServer((self.config.host, self.config.port), CustomHandler, bind_and_activate=False)
-        self.server.allow_reuse_address = True
-        self.server.server_bind()
-        self.server.server_activate()
+        # ThreadingHTTPServer: tek is parcacikli TCPServer istekleri sirayla
+        # isler, dolayisiyla pano acikken yavas bir istek digerlerini bekletir.
+        self.server = ThreadingHTTPServer((self.config.host, self.config.port), CustomHandler)
+        self.server.daemon_threads = True
 
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self._thread.start()
-        logger.info(f"Energy Web Dashboard live at http://localhost:{self.config.port}")
+        logger.info(f"Energy Web Dashboard live at http://{self.config.host}:{self.config.port}")
 
     def stop(self) -> None:
         if self.server:

@@ -25,7 +25,27 @@ class RawSensorSample:
     is_simulated: bool
 
 
+def parse_sensor_payload(data: dict, is_simulated: bool = False) -> RawSensorSample:
+    """Cihazdan gelen JSON govdesini olcume cevirir.
+
+    Seri port ve MQTT (WiFi) yollarinin ikisi de bunu kullanir, boylece iki
+    tasima katmani birebir ayni alanlari ve varsayilanlari uygular.
+    """
+    return RawSensorSample(
+        timestamp=time.time(),
+        voltage=float(data.get("voltage", 230.0)),
+        current=float(data.get("current", 0.0)),
+        power=float(data.get("power", 0.0)),
+        power_factor=float(data.get("power_factor", 1.0)),
+        frequency=float(data.get("frequency", 50.0)),
+        relay_state=bool(data.get("relay_state", True)),
+        is_simulated=is_simulated,
+    )
+
+
 class IoTDataReceiver:
+    RECONNECT_MAX_DELAY_SECONDS = 30.0
+
     def __init__(self, config: HardwareConfig):
         self.config = config
         self._stopped = threading.Event()
@@ -34,6 +54,9 @@ class IoTDataReceiver:
         self.is_connected: bool = False
         self.latest_sample: RawSensorSample | None = None
         self._subscribers: list[Callable[[RawSensorSample], None]] = []
+
+        self._reconnect_delay: float = 0.0
+        self._next_reconnect_at: float = 0.0
 
         self._sim_appliance_state = 0
         self._sim_state_timer = time.time()
@@ -55,9 +78,11 @@ class IoTDataReceiver:
             self._serial = serial.Serial(self.config.port, self.config.baudrate, timeout=self.config.timeout)
             logger.info(f"Connected to physical IoT Energy Hardware on {self.config.port} @ {self.config.baudrate} baud.")
             self.is_connected = True
+            self._reconnect_delay = 0.0
             return True
         except Exception as exc:
             logger.warning(f"Could not open physical serial port '{self.config.port}': {exc}. Switching to emulator.")
+            self._serial = None
             self.is_connected = False
             return False
 
@@ -93,29 +118,56 @@ class IoTDataReceiver:
             is_simulated=True,
         )
 
+    def _close_serial(self, reason: str) -> None:
+        """Donanim koptugunda portu kapatir ve yeniden baglanmaya hazir hale getirir."""
+        if self._serial is not None:
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+        self._serial = None
+        if self.is_connected:
+            logger.warning(f"Physical hardware link lost ({reason}). Falling back until it returns.")
+        self.is_connected = False
+
+    def _should_retry_connection(self) -> bool:
+        """Yeniden baglanma denemeleri arasinda ustel bekleme uygular."""
+        if not self.config.port:
+            return False
+        if time.monotonic() < self._next_reconnect_at:
+            return False
+
+        self._reconnect_delay = min(
+            self._reconnect_delay * 2 if self._reconnect_delay else 1.0,
+            self.RECONNECT_MAX_DELAY_SECONDS,
+        )
+        self._next_reconnect_at = time.monotonic() + self._reconnect_delay
+        return True
+
     def _run_loop(self) -> None:
-        has_physical = self._open_serial()
+        self._open_serial()
 
         while not self._stopped.is_set():
             sample: RawSensorSample | None = None
 
-            if has_physical and self._serial is not None and self._serial.is_open:
+            # Donanim baglantisi yoksa periyodik olarak yeniden baglanmayi dene.
+            # Onceden bu bayrak dongu basinda bir kez hesaplaniyordu; kablo
+            # cekildiginde surec sonsuza kadar sentetik veri uretmeye devam
+            # ediyor ve bir daha asla gercek olcume donmuyordu.
+            if self._serial is None and self._should_retry_connection():
+                self._open_serial()
+
+            if self._serial is not None and self._serial.is_open:
                 try:
                     line = self._serial.readline().decode("utf-8", errors="ignore").strip()
                     if line.startswith("{") and line.endswith("}"):
-                        data = json.loads(line)
-                        sample = RawSensorSample(
-                            timestamp=time.time(),
-                            voltage=float(data.get("voltage", 230.0)),
-                            current=float(data.get("current", 0.0)),
-                            power=float(data.get("power", 0.0)),
-                            power_factor=float(data.get("power_factor", 1.0)),
-                            frequency=float(data.get("frequency", 50.0)),
-                            relay_state=bool(data.get("relay_state", True)),
-                            is_simulated=False,
-                        )
-                except Exception as exc:
+                        sample = parse_sensor_payload(json.loads(line), is_simulated=False)
+                        self._reconnect_delay = 0.0
+                except json.JSONDecodeError as exc:
                     logger.error(f"Error parsing serial JSON: {exc}")
+                except Exception as exc:
+                    # Okuma hatasi genellikle portun dusmesi anlamina gelir.
+                    self._close_serial(str(exc))
 
             if sample is None:
                 if self.config.use_simulation_fallback:
@@ -133,14 +185,21 @@ class IoTDataReceiver:
                     logger.error(f"Error in subscriber callback: {e}")
 
     def send_relay_command(self, command: str) -> bool:
-        if self._serial is not None and self._serial.is_open:
-            try:
-                self._serial.write(f"{command}\n".encode("utf-8"))
-                self._serial.flush()
-                return True
-            except Exception as exc:
-                return False
-        return True
+        """Roleye komut gonderir. Donanim yoksa False doner - basarisiz bir
+        komutu basarili gibi raporlamak, cagiranin roleyi kontrol ettigini
+        sanmasina yol acar."""
+        if self._serial is None or not self._serial.is_open:
+            logger.warning(f"Relay command '{command}' dropped: no physical hardware link.")
+            return False
+
+        try:
+            self._serial.write(f"{command}\n".encode("utf-8"))
+            self._serial.flush()
+            return True
+        except Exception as exc:
+            logger.error(f"Error sending relay command '{command}': {exc}")
+            self._close_serial(str(exc))
+            return False
 
     def stop(self) -> None:
         self._stopped.set()

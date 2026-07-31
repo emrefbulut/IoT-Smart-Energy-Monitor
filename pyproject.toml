@@ -14,6 +14,16 @@ dependencies = [
   "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+# MQTT bir ek yetenektir: kurulu degilse uygulama yerel olarak calismaya devam eder.
+mqtt = [
+  "paho-mqtt>=2.0",
+]
+dev = [
+  "pytest>=8.0",
+  "paho-mqtt>=2.0",
+]
+
 [project.scripts]
 smart-energy = "smart_energy.cli:main"
 energy-monitor = "smart_energy.cli:main"

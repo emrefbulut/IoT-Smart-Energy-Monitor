@@ -35,6 +35,7 @@ class EnergyAnalyticsEngine:
     def __init__(self, config: GridConfig):
         self.config = config
         self.cumulative_energy_joules: float = 0.0
+        self.cumulative_cost: float = 0.0
         self._last_sample_time: float | None = None
         self.total_anomalies_detected: int = 0
         self.recent_anomalies: list[dict[str, Any]] = []
@@ -65,11 +66,18 @@ class EnergyAnalyticsEngine:
         dt_obj = datetime.datetime.fromtimestamp(now)
         tariff_tier, effective_rate = self._determine_tariff(dt_obj)
 
+        # Maliyet, her olcum araliginin enerjisi o anda gecerli olan tarifeyle
+        # fiyatlanip birikerek hesaplanir. Birikmis toplam kWh'i anlik tarifeyle
+        # carpmak yanlistir: saat PEAK'e gectiginde gecmisteki tum tuketim de
+        # yeniden fiyatlanir ve maliyet egrisi geriye dogru zipladigi gibi
+        # NIGHT'a gecisde de dusebilir.
         if dt > 0 and dt < 30.0:
-            self.cumulative_energy_joules += p_active * dt
+            delta_joules = p_active * dt
+            self.cumulative_energy_joules += delta_joules
+            self.cumulative_cost += (delta_joules / 3_600_000.0) * effective_rate
 
         cumulative_kwh = self.cumulative_energy_joules / 3_600_000.0
-        estimated_cost = cumulative_kwh * effective_rate
+        estimated_cost = self.cumulative_cost
 
         anomalies: list[str] = []
         if raw.voltage < self.config.voltage_sag_threshold:

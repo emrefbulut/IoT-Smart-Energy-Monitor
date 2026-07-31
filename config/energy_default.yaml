@@ -21,5 +21,34 @@ storage:
 
 dashboard:
   enabled: true
-  host: "0.0.0.0"
+  # Panoda kimlik dogrulama yok. Ag uzerinden erisim gerekiyorsa "0.0.0.0" yapin.
+  host: "127.0.0.1"
   port: 8050
+
+mqtt:
+  # Kapaliyken uygulama tamamen yerel calisir; MQTT bir ek yetenektir.
+  enabled: false
+  host: "localhost"
+  port: 1883
+  username: null
+  password: null
+  client_id: "smart-energy"
+  base_topic: "smart-energy"
+  qos: 0
+  tls: false
+  # ESP32 WiFi uzerinden yayin yapiyorsa ham olcumleri seri port yerine
+  # MQTT'den al. Firmware'deki MQTT_BASE_TOPIC ile ayni olmalidir.
+  ingest_device_samples: false
+
+load_shedding:
+  enabled: false
+  # restore < shed olmali; aradaki fark histerezis bandidir ve rolenin
+  # esik civarinda surekli acilip kapanmasini engeller.
+  shed_threshold_kw: 3.0
+  restore_threshold_kw: 2.0
+  # Anlik akim sicramalarinin yuku bosuna kesmemesi icin ust uste kac olcum
+  # gerektigi.
+  confirm_samples: 3
+  min_action_interval_seconds: 30.0
+  shed_command: "SHED_LOAD"
+  restore_command: "CONNECT_LOAD"
